@@ -190,57 +190,52 @@ async function switchLanguage(lang) {
 
 // Authentication check and UI management
 async function checkAuthenticationAndShowUI() {
+  console.log('🔄 checkAuthenticationAndShowUI called');
   const authSection = document.getElementById('auth-section');
-  const userProfileSection = document.getElementById('user-profile-section');
   const featuresSection = document.getElementById('features-section');
   const noApiKeyOverlay = document.getElementById('no-api-key-overlay');
 
   try {
     const isAuth = await window.VUAuth.isAuthenticated();
+    console.log('🔐 Authentication status:', isAuth);
     
     if (isAuth) {
-      // User is authenticated - show profile and features
-      const userProfile = await window.VUAuth.getUserProfile();
+      // User is authenticated - hide auth section and show features
+      console.log('✅ User authenticated - showing features');
+      authSection.style.display = 'none';
       
-      if (userProfile) {
-        // Update user profile UI
-        document.getElementById('user-name').textContent = userProfile.name || 'VU User';
-        document.getElementById('user-email').textContent = userProfile.email;
-        
-        if (userProfile.picture) {
-          document.getElementById('user-avatar').src = userProfile.picture;
+      // Check backend connection
+      const isConnected = await window.GeminiAPI.validateConnection();
+      console.log('🔌 Backend connection:', isConnected);
+      
+      if (isConnected) {
+        console.log('✅ Backend connected - showing features section');
+        if (noApiKeyOverlay) {
+          noApiKeyOverlay.style.display = 'none';
+          noApiKeyOverlay.style.pointerEvents = 'none';
         }
-        
-        // Show user profile, hide auth section
-        authSection.style.display = 'none';
-        userProfileSection.style.display = 'block';
-        
-        // Check backend connection
-        const isConnected = await window.GeminiAPI.validateConnection();
-        if (isConnected) {
-          if (noApiKeyOverlay) {
-            noApiKeyOverlay.style.display = 'none';
-            noApiKeyOverlay.style.pointerEvents = 'none';
-          }
-          if (featuresSection) featuresSection.classList.remove('hidden');
-        } else {
-          if (noApiKeyOverlay) {
-            const overlayTitle = noApiKeyOverlay.querySelector('h2');
-            const overlayText = noApiKeyOverlay.querySelector('p');
-            
-            if (overlayTitle) overlayTitle.textContent = 'Backend Connection Required';
-            if (overlayText) overlayText.innerHTML = 'Unable to connect to the backend server. Please ensure the server is running and properly configured.';
-            
-            noApiKeyOverlay.style.display = 'flex';
-            noApiKeyOverlay.style.pointerEvents = 'auto';
-          }
-          if (featuresSection) featuresSection.classList.add('hidden');
+        if (featuresSection) {
+          featuresSection.classList.remove('hidden');
+          featuresSection.style.display = 'block'; // Explicitly set display
         }
+      } else {
+        console.log('❌ Backend not connected - showing overlay');
+        if (noApiKeyOverlay) {
+          const overlayTitle = noApiKeyOverlay.querySelector('h2');
+          const overlayText = noApiKeyOverlay.querySelector('p');
+          
+          if (overlayTitle) overlayTitle.textContent = 'Backend Connection Required';
+          if (overlayText) overlayText.innerHTML = 'Unable to connect to the backend server. Please ensure the server is running and properly configured.';
+          
+          noApiKeyOverlay.style.display = 'flex';
+          noApiKeyOverlay.style.pointerEvents = 'auto';
+        }
+        if (featuresSection) featuresSection.classList.add('hidden');
       }
     } else {
       // User is not authenticated - show auth section
+      console.log('❌ User not authenticated - showing auth section');
       authSection.style.display = 'block';
-      userProfileSection.style.display = 'none';
       featuresSection.classList.add('hidden');
       
       if (noApiKeyOverlay) {
@@ -249,10 +244,9 @@ async function checkAuthenticationAndShowUI() {
       }
     }
   } catch (error) {
-    console.error('Error checking authentication:', error);
+    console.error('❌ Error checking authentication:', error);
     // On error, show auth section
     authSection.style.display = 'block';
-    userProfileSection.style.display = 'none';
     featuresSection.classList.add('hidden');
   }
 }
@@ -425,7 +419,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Setup authentication event listeners
   const signInBtn = document.getElementById('sign-in-btn');
-  const signOutBtn = document.getElementById('sign-out-btn');
   const authError = document.getElementById('auth-error');
 
   if (signInBtn) {
@@ -435,12 +428,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         signInBtn.textContent = 'Signing in...';
         authError.style.display = 'none';
 
+        console.log('🔐 Starting sign-in process...');
         await window.VUAuth.signIn();
+        console.log('✅ Sign-in completed, refreshing UI...');
+        
+        // Show success feedback
+        signInBtn.textContent = '✅ Signed in!';
+        signInBtn.style.background = 'linear-gradient(135deg, #4CAF50 0%, #45a049 100%)';
+        
+        // Small delay to ensure storage write completes
+        await new Promise(resolve => setTimeout(resolve, 200));
         
         // Refresh UI after successful sign in
         await checkAuthenticationAndShowUI();
+        
+        console.log('✅ UI refresh complete');
+        
+        // If we got here, sign-in was successful
+        // The auth section should now be hidden and features should be visible
       } catch (error) {
-        console.error('Sign in error:', error);
+        console.error('❌ Sign in error:', error);
         authError.textContent = error.message || 'Sign in failed. Please try again.';
         authError.style.display = 'block';
         
@@ -450,29 +457,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  if (signOutBtn) {
-    signOutBtn.addEventListener('click', async () => {
-      try {
-        signOutBtn.disabled = true;
-        signOutBtn.textContent = 'Signing out...';
-
-        await window.VUAuth.signOut();
-        
-        // Refresh UI after sign out
-        await checkAuthenticationAndShowUI();
-        
-        signOutBtn.disabled = false;
-        signOutBtn.textContent = 'Sign Out';
-      } catch (error) {
-        console.error('Sign out error:', error);
-        signOutBtn.disabled = false;
-        signOutBtn.textContent = 'Sign Out';
-      }
-    });
-  }
-
   // Check authentication status on load
   await checkAuthenticationAndShowUI();
+  
+  // Listen for storage changes (e.g., when auth completes)
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local' && changes.vuAuthUser) {
+      console.log('🔄 Auth state changed, refreshing UI...');
+      checkAuthenticationAndShowUI();
+    }
+  });
 });
 
 // Handle keyboard navigation
@@ -720,7 +714,7 @@ async function highlightSpecificTerm(term) {
   sendHighlightRequest("highlightText", term);
 }
 
-// Call Backend API (no API key needed)
+// Call Backend API with streaming support
 async function callGemini(prompt, feature) {
     try {
       // Prepare system prompt based on feature
@@ -744,23 +738,82 @@ async function callGemini(prompt, feature) {
           break;
       }
       
-      // Set options for API call
+      // Set up for streaming display
+      hideLoading();
+      resultContent.innerHTML = '';
+      resultContent.style.opacity = '1';
+      resultActions.classList.add('hidden');
+      
+      let accumulatedText = '';
+      
+      // Set options for API call with streaming callback
       const options = {
         systemPrompt: systemPrompt,
-      feature: feature
+        feature: feature,
+        onChunk: (chunk) => {
+          // Accumulate the text
+          accumulatedText += chunk;
+          
+          // Convert markdown to HTML and display
+          const formattedText = convertMarkdownToHTML(accumulatedText);
+          resultContent.innerHTML = formattedText;
+          
+          // Scroll to bottom of result container to show new content
+          resultContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
       };
       
-    // Call the backend API using the window.GeminiAPI exported from api.js
-    const response = await window.GeminiAPI.generateContent(prompt, options);
+      // Call the backend API using the window.GeminiAPI exported from api.js
+      const response = await window.GeminiAPI.generateContent(prompt, options);
       
-      // Display the response with scroll effect
+      // Display final result (in case there were any issues with streaming)
       displayResult(response);
       
     } catch (error) {
       hideLoading();
-      resultContent.textContent = `Error: ${error.message}`;
+      
+      // Check if it's an authentication error
+      if (error.message.includes('Authentication') || error.message.includes('sign in')) {
+        resultContent.innerHTML = `
+          <div style="text-align: center; padding: 20px;">
+            <h3 style="color: #d32f2f; margin-bottom: 10px;">Authentication Required</h3>
+            <p style="margin-bottom: 15px;">${error.message}</p>
+            <button id="retry-auth-btn" style="
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              color: white;
+              border: none;
+              padding: 10px 20px;
+              border-radius: 8px;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: 600;
+            ">Sign In Again</button>
+          </div>
+        `;
+        
+        // Add event listener to the button
+        const retryBtn = document.getElementById('retry-auth-btn');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', async () => {
+            try {
+              retryBtn.textContent = 'Signing in...';
+              retryBtn.disabled = true;
+              await window.VUAuth.signIn();
+              await checkAuthenticationAndShowUI();
+            } catch (signInError) {
+              console.error('Sign in error:', signInError);
+              alert(signInError.message || 'Sign in failed. Please try again.');
+              retryBtn.textContent = 'Sign In Again';
+              retryBtn.disabled = false;
+            }
+          });
+        }
+      } else {
+        resultContent.textContent = `Error: ${error.message}`;
+      }
+      
       resultContent.classList.add('error-text');
-    console.error('Backend API Error:', error);
+      console.error('Backend API Error:', error);
       shakeElement(resultContainer);
       
       setTimeout(() => {
@@ -806,40 +859,82 @@ function displayResult(text) {
 function convertMarkdownToHTML(text) {
   if (!text) return '';
   
-  // Replace headings
-  text = text.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
-  text = text.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
-  text = text.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
-  text = text.replace(/^#### (.*?)$/gm, '<h4>$1</h4>');
+  // Normalize line endings and trim excess whitespace
+  text = text.trim().replace(/\r\n/g, '\n');
   
-  // Replace bold
-  text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Replace headings (must be done before other replacements)
+  text = text.replace(/^#### (.*?)$/gm, '<h4>$1</h4>');
+  text = text.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
+  text = text.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
+  text = text.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
+  
+  // Replace bold (before italic to handle ***)
+  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   
   // Replace italic
-  text = text.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
   
-  // Replace unordered lists
-  text = text.replace(/^- (.*?)$/gm, '<li>$1</li>');
-  text = text.replace(/(<li>.*?<\/li>\n)+/gs, '<ul>$&</ul>');
+  // Process lists more carefully
+  // Unordered lists
+  text = text.replace(/^[\s]*[-*+] (.+)$/gm, '<li>$1</li>');
+  // Ordered lists
+  text = text.replace(/^[\s]*\d+\. (.+)$/gm, '<li>$1</li>');
   
-  // Replace ordered lists (numbers)
-  text = text.replace(/^\d+\. (.*?)$/gm, '<li>$1</li>');
-  text = text.replace(/(<li>.*?<\/li>\n)+/gs, '<ol>$&</ol>');
-  
-  // Replace line breaks with paragraph tags
-  const paragraphs = text.split('\n\n');
-  text = paragraphs.map(p => {
-    // Skip if it's already a formatted element
-    if (p.trim().startsWith('<h') || 
-        p.trim().startsWith('<ul') || 
-        p.trim().startsWith('<ol') ||
-        p.trim().startsWith('<li')) {
-      return p;
+  // Wrap consecutive list items in ul/ol tags
+  text = text.replace(/(<li>[\s\S]+?<\/li>)(?:\n|$)/g, (match) => {
+    // Check if it's part of an existing list
+    if (match.includes('<ul>') || match.includes('<ol>')) {
+      return match;
     }
-    return `<p>${p}</p>`;
-  }).join('\n');
+    // Wrap in ul by default (could be improved to detect ordered vs unordered)
+    return '<ul>' + match.trim() + '</ul>\n';
+  });
   
-  return text;
+  // Clean up multiple newlines
+  text = text.replace(/\n{3,}/g, '\n\n');
+  
+  // Split into blocks and wrap non-formatted text in paragraphs
+  const lines = text.split('\n');
+  const result = [];
+  let currentParagraph = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Check if line is already formatted (heading, list, etc.)
+    const isFormatted = line.startsWith('<h') || 
+                       line.startsWith('<ul') || 
+                       line.startsWith('<ol') || 
+                       line.startsWith('</ul') || 
+                       line.startsWith('</ol') ||
+                       line.startsWith('<li');
+    
+    if (isFormatted) {
+      // Flush current paragraph if any
+      if (currentParagraph.length > 0) {
+        result.push('<p>' + currentParagraph.join(' ') + '</p>');
+        currentParagraph = [];
+      }
+      result.push(line);
+    } else if (line === '') {
+      // Empty line - flush paragraph
+      if (currentParagraph.length > 0) {
+        result.push('<p>' + currentParagraph.join(' ') + '</p>');
+        currentParagraph = [];
+      }
+    } else {
+      // Regular text line - add to current paragraph
+      currentParagraph.push(line);
+    }
+  }
+  
+  // Flush any remaining paragraph
+  if (currentParagraph.length > 0) {
+    result.push('<p>' + currentParagraph.join(' ') + '</p>');
+  }
+  
+  return result.join('\n');
 }
 
 // Show loading indicator

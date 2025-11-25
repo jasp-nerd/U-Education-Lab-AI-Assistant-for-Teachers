@@ -1,14 +1,14 @@
 // Settings page script for VU Education Lab AI Assistant
 // Handles Gemini API key change logic
 
-document.addEventListener('DOMContentLoaded', () => {
-  const checkBackendBtn = document.getElementById('settings-check-backend');
-  const backendStatus = document.getElementById('settings-backend-status');
+document.addEventListener('DOMContentLoaded', async () => {
   const backBtn = document.getElementById('settings-back-btn');
   const languageToggleBtn = document.getElementById('settings-language-toggle');
   const languageStatus = document.getElementById('settings-language-status');
   const floatingPopupToggle = document.getElementById('settings-floating-popup-toggle');
   const floatingPopupStatus = document.getElementById('settings-floating-popup-status');
+  const signOutBtn = document.getElementById('settings-sign-out-btn');
+  const accountSection = document.getElementById('settings-account-section');
 
   // --- TRANSLATION SUPPORT FOR SETTINGS PAGE ---
   let settingsTranslations = {};
@@ -54,9 +54,6 @@ document.addEventListener('DOMContentLoaded', () => {
     await loadSettingsTranslations('en');
     await loadSettingsTranslations('nl');
     updateSettingsUILanguage();
-    
-    // Check backend connection status
-    checkBackendConnection();
   });
 
   // Load floating popup setting
@@ -64,6 +61,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const showFloating = result.show_floating_popup !== false; // default true
     updateFloatingPopupToggle(showFloating);
   });
+
+  // Ensure AI provider is set to azure (no longer user-selectable)
+  chrome.storage.local.set({ ai_provider: 'azure' });
 
   function updateFloatingPopupToggle(showFloating) {
     floatingPopupToggle.textContent = showFloating ? 'ON' : 'OFF';
@@ -74,41 +74,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       floatingPopupToggle.style.backgroundColor = 'var(--vu-orange)';
     }
-  }
-
-  // Backend connection checking logic
-  checkBackendBtn.addEventListener('click', checkBackendConnection);
-
-  async function checkBackendConnection() {
-    backendStatus.textContent = 'Checking connection...';
-    backendStatus.className = '';
-    checkBackendBtn.disabled = true;
-    checkBackendBtn.textContent = 'Checking...';
-    
-    try {
-      const isConnected = await window.GeminiAPI.validateConnection();
-      
-      if (isConnected) {
-        backendStatus.textContent = 'Backend server is connected and API key is configured!';
-        backendStatus.className = 'success';
-        checkBackendBtn.textContent = '✓ Connected';
-      } else {
-        const backendInfo = await window.GeminiAPI.getBackendStatus();
-        backendStatus.textContent = 'Backend server is reachable but API key is not configured properly.';
-        backendStatus.className = 'error';
-        checkBackendBtn.textContent = '⚠️ API Key Issue';
-      }
-    } catch (error) {
-      console.error('Backend connection check failed:', error);
-      backendStatus.textContent = 'Unable to connect to backend server. Please ensure it is running.';
-      backendStatus.className = 'error';
-      checkBackendBtn.textContent = '❌ Connection Failed';
-    }
-    
-      setTimeout(() => {
-      checkBackendBtn.disabled = false;
-      checkBackendBtn.textContent = 'Check Connection';
-    }, 3000);
   }
 
   // Language toggle logic
@@ -152,4 +117,61 @@ document.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => { floatingPopupStatus.textContent = ''; }, 1200);
     });
   });
+
+  // Load user profile information
+  async function loadUserProfile() {
+    try {
+      const isAuth = await window.VUAuth.isAuthenticated();
+      
+      if (isAuth) {
+        const userProfile = await window.VUAuth.getUserProfile();
+        
+        if (userProfile) {
+          // Update user profile UI
+          document.getElementById('settings-user-name').textContent = userProfile.name || 'VU User';
+          document.getElementById('settings-user-email').textContent = userProfile.email;
+          
+          if (userProfile.picture) {
+            document.getElementById('settings-user-avatar').src = userProfile.picture;
+          }
+          
+          // Show account section
+          accountSection.style.display = 'block';
+        } else {
+          // Hide account section if no profile
+          accountSection.style.display = 'none';
+        }
+      } else {
+        // Hide account section if not authenticated
+        accountSection.style.display = 'none';
+      }
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+      accountSection.style.display = 'none';
+    }
+  }
+
+  // Sign out button handler
+  if (signOutBtn) {
+    signOutBtn.addEventListener('click', async () => {
+      try {
+        signOutBtn.disabled = true;
+        const originalContent = signOutBtn.innerHTML;
+        signOutBtn.innerHTML = '<span class="btn-icon">⏳</span><span>Signing out...</span>';
+
+        await window.VUAuth.signOut();
+        
+        // Redirect to popup after sign out
+        window.location.href = 'popup.html';
+      } catch (error) {
+        console.error('Sign out error:', error);
+        signOutBtn.disabled = false;
+        signOutBtn.innerHTML = '<span class="btn-icon">🚪</span><span>Sign Out</span>';
+        alert('Failed to sign out. Please try again.');
+      }
+    });
+  }
+
+  // Load user profile on page load
+  await loadUserProfile();
 });

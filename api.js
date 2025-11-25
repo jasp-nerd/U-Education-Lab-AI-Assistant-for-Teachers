@@ -1,29 +1,36 @@
 // API integration module for VU Education Lab AI Assistant
-// Backend implementation - calls secure backend server instead of direct Gemini API
+// Backend implementation - calls secure backend server for Azure OpenAI streaming
 
 // Configuration - Backend URL
 // For local development: http://localhost:3000
-// For production: Replace with your Heroku app URL
-const BACKEND_URL = 'https://vu-education-lab-backend-f20c07d5ca03.herokuapp.com'; // Change YOUR_HEROKU_APP_NAME to your actual Heroku app name
+// For production: Azure App Service URL
+const BACKEND_URL = 'https://vu-education-lab-backend.azurewebsites.net';
 
 /**
- * Generate content using the backend server
+ * Generate content using the backend server with streaming support
  * @param {string} prompt - The user prompt
  * @param {Object} options - Additional options
- * @returns {Promise<string>} - The generated content
+ * @param {Function} options.onChunk - Callback function called for each content chunk
+ * @returns {Promise<string>} - The complete generated content
  */
 async function generateContent(prompt, options = {}) {
   try {
-    console.log(`Starting backend request with prompt: ${prompt.substring(0, 100)}...`);
+    console.log(`Starting streaming request with prompt: ${prompt.substring(0, 100)}...`);
 
     // Validate input
     if (!prompt || typeof prompt !== 'string') {
       throw new Error('Invalid input: prompt is required and must be a string');
     }
 
-    // Get user authentication
+    // Get a valid token (will refresh if needed)
+    const token = await window.VUAuth.getValidToken();
+    if (!token) {
+      throw new Error('User not authenticated. Please sign in.');
+    }
+
+    // Get user info
     const user = await window.VUAuth.getCurrentUser();
-    if (!user || !user.email || !user.token) {
+    if (!user || !user.email) {
       throw new Error('User not authenticated. Please sign in.');
     }
 
@@ -34,42 +41,52 @@ async function generateContent(prompt, options = {}) {
       feature: options.feature || 'general'
     };
 
-    console.log("Making request to backend:", `${BACKEND_URL}/api/generate`);
+    console.log("Making streaming request to backend:", `${BACKEND_URL}/api/generate`);
 
-    // Make request to backend server WITH AUTHENTICATION
+    // Make streaming request to backend server
     const response = await fetch(`${BACKEND_URL}/api/generate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${user.token}`,
+          "Authorization": `Bearer ${token}`,
           "X-User-Email": user.email,
           "X-Extension-ID": chrome.runtime.id
         },
         body: JSON.stringify(requestBody)
     });
 
-    // Get the raw response text for better error handling
-    const responseText = await response.text();
-    console.log("Raw backend response:", responseText.substring(0, 200) + "...");
-
-    // Try to parse the response as JSON
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error("Failed to parse backend response as JSON:", parseError);
-      throw new Error(`Failed to parse backend response: ${responseText.substring(0, 100)}...`);
-    }
-
     // Check if response is successful
     if (!response.ok) {
-      const errorMessage = data.error || response.statusText;
+      // Try to get error message
+      const responseText = await response.text();
+      let errorMessage = response.statusText;
+      
+      try {
+        const data = JSON.parse(responseText);
+        errorMessage = data.error || errorMessage;
+      } catch (e) {
+        errorMessage = responseText.substring(0, 100);
+      }
+
       console.error("Backend Error:", {
         status: response.status,
-        statusText: response.statusText,
-        errorMessage,
-        data
+        errorMessage
       });
+
+      // Handle 401 - token might be expired, try to refresh and retry once
+      if (response.status === 401 && !options._retryAttempted) {
+        console.log("Received 401 error, attempting to refresh token and retry...");
+        
+        const newToken = await window.VUAuth.refreshToken();
+        
+        if (newToken) {
+          console.log("Token refreshed, retrying request...");
+          options._retryAttempted = true;
+          return await generateContent(prompt, options);
+        } else {
+          throw new Error("Authentication expired. Please sign in again.");
+        }
+      }
 
       // Provide user-friendly error messages based on status
       let userMessage;
@@ -99,14 +116,74 @@ async function generateContent(prompt, options = {}) {
       throw new Error(userMessage);
     }
 
-    // Verify the response structure and extract the content
-    if (!data.content) {
-      console.error("Unexpected backend response structure:", data);
-      throw new Error("Unexpected response structure from backend server");
+    // Handle streaming response
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullContent = '';
+    let buffer = '';
+    let streamDone = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) {
+        console.log('Stream complete - connection closed');
+        break;
+      }
+
+      // Decode the chunk and add to buffer
+      buffer += decoder.decode(value, { stream: true });
+      
+      // Process complete lines from buffer
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        
+        if (trimmedLine === '' || !trimmedLine.startsWith('data: ')) {
+          continue;
+        }
+
+        const jsonStr = trimmedLine.substring(6); // Remove 'data: ' prefix
+        
+        try {
+          const data = JSON.parse(jsonStr);
+          
+          if (data.error) {
+            throw new Error(data.error);
+          }
+          
+          if (data.content) {
+            fullContent += data.content;
+            // Call the onChunk callback if provided
+            if (options.onChunk && typeof options.onChunk === 'function') {
+              options.onChunk(data.content);
+            }
+          }
+          
+          if (data.warning) {
+            console.warn('Backend warning:', data.warning);
+          }
+          
+          if (data.done) {
+            console.log('Stream marked as done by server');
+            streamDone = true;
+            break;
+          }
+        } catch (parseError) {
+          console.error('Error parsing streaming chunk:', parseError, 'Line:', jsonStr);
+        }
+      }
+      
+      // Break outer loop if stream is done
+      if (streamDone) {
+        break;
+      }
     }
 
-    console.log("Content generation successful");
-    return data.content;
+    console.log("Content generation successful, total length:", fullContent.length);
+    return fullContent;
 
   } catch (error) {
     console.error('Error calling backend API:', error);
@@ -129,7 +206,8 @@ async function validateConnection() {
   try {
     console.log("Validating backend connection...");
 
-    // Get user info for authentication
+    // Get a valid token (will refresh if needed)
+    const token = await window.VUAuth.getValidToken();
     const user = await window.VUAuth.getCurrentUser();
     
     const headers = {
@@ -137,8 +215,8 @@ async function validateConnection() {
     };
     
     // Add auth if user is signed in
-    if (user?.token && user?.email) {
-      headers['Authorization'] = `Bearer ${user.token}`;
+    if (token && user?.email) {
+      headers['Authorization'] = `Bearer ${token}`;
       headers['X-User-Email'] = user.email;
       headers['X-Extension-ID'] = chrome.runtime.id;
     }
@@ -157,7 +235,7 @@ async function validateConnection() {
     const healthData = await healthResponse.json();
     console.log("Backend health check passed:", healthData);
 
-    // Then check if API key is configured on backend
+    // Then check Azure OpenAI configuration on backend
     const validateResponse = await fetch(`${BACKEND_URL}/api/validate`, {
         method: 'GET',
         headers: headers
@@ -171,7 +249,8 @@ async function validateConnection() {
     const validateData = await validateResponse.json();
     console.log("Backend validation result:", validateData);
 
-    return validateData.valid === true;
+    // Return the validation data (contains azure status)
+    return validateData;
 
   } catch (error) {
     console.error('Error validating backend connection:', error);

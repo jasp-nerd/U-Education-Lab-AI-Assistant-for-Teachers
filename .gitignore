@@ -1,0 +1,19 @@
+# Sensitive backup files - DO NOT COMMIT
+.sensitive-backup.json
+*.sensitive-backup.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build files
+*.crx
+*.pem
+*.zip
+

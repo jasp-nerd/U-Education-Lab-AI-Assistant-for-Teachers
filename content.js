@@ -61,62 +61,326 @@ window.addEventListener('message', (event) => {
   }
 });
 
+// Function to detect if current page is a PDF
+function isPDFPage() {
+  // Check if URL ends with .pdf
+  if (window.location.href.toLowerCase().endsWith('.pdf')) {
+    return true;
+  }
+  
+  // Check if Chrome PDF viewer is present
+  // Chrome's PDF viewer has specific elements
+  const pdfViewer = document.querySelector('embed[type="application/pdf"]') ||
+                    document.querySelector('iframe[src*=".pdf"]') ||
+                    document.querySelector('.plugin') ||
+                    document.querySelector('#plugin');
+  
+  if (pdfViewer) {
+    return true;
+  }
+  
+  // Check for PDF.js viewer elements (Chrome uses PDF.js internally)
+  const textLayer = document.querySelector('.textLayer');
+  const pdfContainer = document.querySelector('#viewer') || document.querySelector('.pdfViewer');
+  
+  if (textLayer || pdfContainer) {
+    return true;
+  }
+  
+  // Check content type
+  const contentType = document.contentType;
+  if (contentType && contentType.toLowerCase().includes('application/pdf')) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Function to extract text from Chrome's PDF viewer
+function extractPDFText() {
+  const textContent = [];
+  
+  // Chrome's PDF viewer renders text in .textLayer elements
+  // Each page has its own textLayer with text spans
+  const textLayers = document.querySelectorAll('.textLayer');
+  
+  if (textLayers.length > 0) {
+    textLayers.forEach(layer => {
+      const spans = layer.querySelectorAll('span');
+      spans.forEach(span => {
+        const text = span.textContent?.trim();
+        if (text && text.length > 0) {
+          textContent.push(text);
+        }
+      });
+    });
+  } else {
+    // Fallback: try to find text in common PDF viewer structures
+    // Some PDF viewers render text directly in the body
+    const allText = document.body.innerText || document.body.textContent;
+    if (allText && allText.trim().length > 100) {
+      // If we have substantial text, it's likely from a PDF
+      textContent.push(allText);
+    }
+  }
+  
+  return textContent.join('\n\n');
+}
+
 // Function to extract structured content from the page
 function extractStructuredContent() {
+  // Check if this is a PDF page first
+  if (isPDFPage()) {
+    console.log('VU AI Assistant: Detected PDF page, extracting PDF content...');
+    const pdfText = extractPDFText();
+    
+    // Count text layers for page count estimation
+    const textLayers = document.querySelectorAll('.textLayer');
+    
+    if (!pdfText || pdfText.trim().length === 0) {
+      console.warn('VU AI Assistant: Could not extract text from PDF');
+      return {
+        title: document.title || 'PDF Document',
+        url: window.location.href,
+        isPDF: true,
+        pdfExtractionFailed: true,
+        paragraphs: [],
+        headings: { h1: [], h2: [], h3: [] },
+        stats: {
+          paragraphsCount: 0,
+          headingsTotal: 0,
+          pdfPageCount: textLayers.length || 0
+        }
+      };
+    }
+    
+    // Split PDF text into paragraphs (double newlines or long lines)
+    const paragraphs = pdfText
+      .split(/\n\s*\n/)
+      .map(p => p.trim())
+      .filter(p => p.length > 0)
+      .slice(0, 500); // Limit paragraphs
+    
+    // Try to identify headings (lines that are short and might be headings)
+    const lines = pdfText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const headings = {
+      h1: [],
+      h2: [],
+      h3: []
+    };
+    
+    // Simple heuristic: lines that are shorter and appear before paragraphs might be headings
+    lines.forEach((line, index) => {
+      if (line.length < 100 && line.length > 3) {
+        // Check if next line is longer (likely a paragraph)
+        if (index < lines.length - 1 && lines[index + 1].length > line.length * 2) {
+          if (headings.h1.length < 50) {
+            headings.h1.push(line);
+          } else if (headings.h2.length < 50) {
+            headings.h2.push(line);
+          } else if (headings.h3.length < 50) {
+            headings.h3.push(line);
+          }
+        }
+      }
+    });
+    
+    return {
+      title: document.title || 'PDF Document',
+      url: window.location.href,
+      isPDF: true,
+      paragraphs: paragraphs,
+      headings: headings,
+      pdfText: pdfText.substring(0, 1000000), // Full text, limited to 1MB
+      stats: {
+        paragraphsCount: paragraphs.length,
+        headingsTotal: headings.h1.length + headings.h2.length + headings.h3.length,
+        pdfPageCount: textLayers.length || 0
+      }
+    };
+  }
+  
+  // Constants for content limits
+  // AI models (GPT-5) support 256K tokens (~1MB text), so we set generous limits
+  const MAX_PARAGRAPHS = 500;
+  const MAX_HEADINGS_PER_TYPE = 200;
+  const MAX_LISTS = 100;
+  const MAX_IMAGES = 100;
+  const MAX_TABLES = 50;
+  const MAX_LINKS = 200;
+  const MAX_CODE_BLOCKS = 50;
+  const MAX_TEXT_LENGTH = 1000000; // 1MB max (~250K tokens)
+
+  // Try to find main content area to avoid navigation/UI pollution
+  const mainContent = document.querySelector('main, article, [role="main"], .content, #content, #main');
+  const contentRoot = mainContent || document.body;
+
   const pageInfo = {
     title: document.title,
     url: window.location.href,
-    text: document.body.innerText
+    // REMOVED: text: document.body.innerText - this was causing massive duplication
   };
 
-  // Extract headings for better structure
+  // Extract headings for better structure (limit to avoid huge pages)
   const headings = {
-    h1: Array.from(document.querySelectorAll('h1')).map(el => el.innerText),
-    h2: Array.from(document.querySelectorAll('h2')).map(el => el.innerText),
-    h3: Array.from(document.querySelectorAll('h3')).map(el => el.innerText)
+    h1: Array.from(contentRoot.querySelectorAll('h1'))
+      .map(el => el.innerText?.trim())
+      .filter(text => text && text.length > 0)
+      .slice(0, MAX_HEADINGS_PER_TYPE),
+    h2: Array.from(contentRoot.querySelectorAll('h2'))
+      .map(el => el.innerText?.trim())
+      .filter(text => text && text.length > 0)
+      .slice(0, MAX_HEADINGS_PER_TYPE),
+    h3: Array.from(contentRoot.querySelectorAll('h3'))
+      .map(el => el.innerText?.trim())
+      .filter(text => text && text.length > 0)
+      .slice(0, MAX_HEADINGS_PER_TYPE)
   };
 
-  // Extract paragraphs for better content analysis
-  const paragraphs = Array.from(document.querySelectorAll('p'))
-    .map(el => el.innerText)
-    .filter(text => text.trim().length > 0);
+  // Extract paragraphs for better content analysis (with limits)
+  const paragraphs = Array.from(contentRoot.querySelectorAll('p'))
+    .map(el => el.innerText?.trim())
+    .filter(text => text && text.length > 0)
+    .slice(0, MAX_PARAGRAPHS);
 
-  // Extract lists for better structured content
-  const lists = Array.from(document.querySelectorAll('ul, ol'))
+  // Extract lists - FIXED: Use direct children only to avoid nested list duplication
+  const lists = Array.from(contentRoot.querySelectorAll('ul, ol'))
     .map(list => ({
       type: list.tagName.toLowerCase(),
-      items: Array.from(list.querySelectorAll('li')).map(li => li.innerText)
-    }));
+      items: Array.from(list.children)
+        .filter(el => el.tagName === 'LI')
+        .map(li => li.innerText?.trim())
+        .filter(text => text && text.length > 0)
+    }))
+    .filter(list => list.items.length > 0)
+    .slice(0, MAX_LISTS);
 
-  // Extract images with alt text for context
-  const images = Array.from(document.querySelectorAll('img'))
-    .filter(img => img.alt?.trim())
-    .map(img => ({ alt: img.alt, src: img.src }));
+  // Extract images - FIXED: Include all images, not just those with alt text
+  const images = Array.from(contentRoot.querySelectorAll('img'))
+    .map(img => ({
+      alt: img.alt?.trim() || '[No alt text]',
+      src: img.src,
+      hasAlt: !!(img.alt?.trim())
+    }))
+    .filter(img => img.src && !img.src.startsWith('data:')) // Skip tiny data URLs
+    .slice(0, MAX_IMAGES);
 
-  // Extract tables for structured data
-  const tables = Array.from(document.querySelectorAll('table'))
+  // Extract important links with context
+  const links = Array.from(contentRoot.querySelectorAll('a[href]'))
+    .filter(link => {
+      const href = link.href;
+      return href && 
+             !href.startsWith('javascript:') && 
+             !href.startsWith('#') &&
+             link.innerText?.trim();
+    })
+    .map(link => ({
+      text: link.innerText.trim(),
+      href: link.href,
+      isExternal: !link.href.startsWith(window.location.origin)
+    }))
+    .slice(0, MAX_LINKS);
+
+  // Extract tables with improved structure
+  const tables = Array.from(contentRoot.querySelectorAll('table'))
     .map(table => {
-      const headers = Array.from(table.querySelectorAll('th')).map(th => th.innerText);
-      const rows = Array.from(table.querySelectorAll('tr')).map(tr =>
-        Array.from(tr.querySelectorAll('td')).map(td => td.innerText)
-      ).filter(row => row.length > 0);
-      return { headers, rows };
-    });
+      const headers = Array.from(table.querySelectorAll('th'))
+        .map(th => th.innerText?.trim())
+        .filter(text => text);
+      const rows = Array.from(table.querySelectorAll('tbody tr, tr'))
+        .map(tr => {
+          const cells = Array.from(tr.querySelectorAll('td'))
+            .map(td => td.innerText?.trim())
+            .filter(text => text);
+          if (cells.length === 0) return null;
+          
+          // If we have headers and same number of cells, create object
+          if (headers.length > 0 && headers.length === cells.length) {
+            return Object.fromEntries(headers.map((h, i) => [h, cells[i]]));
+          }
+          return cells;
+        })
+        .filter(row => row !== null);
+      
+      return {
+        headers,
+        rows,
+        hasHeaders: headers.length > 0,
+        rowCount: rows.length
+      };
+    })
+    .filter(table => table.rows.length > 0)
+    .slice(0, MAX_TABLES);
+
+  // Extract code blocks for technical/educational content
+  const codeBlocks = Array.from(contentRoot.querySelectorAll('pre code, pre, code'))
+    .map(code => {
+      const text = code.innerText?.trim();
+      if (!text || text.length < 10) return null; // Skip very short snippets
+      
+      return {
+        text: text.substring(0, 5000), // Limit individual code blocks
+        language: code.className.match(/language-(\w+)/)?.[1] || 
+                  code.parentElement?.className.match(/language-(\w+)/)?.[1] || 
+                  'unknown'
+      };
+    })
+    .filter(block => block !== null)
+    .slice(0, MAX_CODE_BLOCKS);
 
   // Extract meta description if available
   let metaDescription = "";
   const metaDesc = document.querySelector('meta[name="description"]');
-  if (metaDesc) metaDescription = metaDesc.getAttribute("content");
+  if (metaDesc) metaDescription = metaDesc.getAttribute("content") || "";
 
-  return {
+  // Extract additional metadata
+  const metaKeywords = document.querySelector('meta[name="keywords"]')?.getAttribute("content") || "";
+  const author = document.querySelector('meta[name="author"]')?.getAttribute("content") || "";
+  const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute("content") || "";
+  const ogType = document.querySelector('meta[property="og:type"]')?.getAttribute("content") || "";
+
+  // Assemble final result
+  const result = {
     ...pageInfo,
     metaDescription,
+    metaKeywords,
+    author,
+    ogTitle,
+    ogType,
     headings,
     paragraphs,
     lists,
     images,
-    tables
+    links,
+    tables,
+    codeBlocks,
+    stats: {
+      headingsTotal: headings.h1.length + headings.h2.length + headings.h3.length,
+      paragraphsCount: paragraphs.length,
+      listsCount: lists.length,
+      imagesCount: images.length,
+      linksCount: links.length,
+      tablesCount: tables.length,
+      codeBlocksCount: codeBlocks.length
+    }
   };
+
+  // Estimate total size and truncate if needed
+  const resultStr = JSON.stringify(result);
+  if (resultStr.length > MAX_TEXT_LENGTH) {
+    console.warn(`VU AI Assistant: Content too large (${resultStr.length} chars), truncating...`);
+    
+    // Progressively remove less important content (should rarely happen with 1MB limit)
+    if (result.codeBlocks.length > 30) result.codeBlocks = result.codeBlocks.slice(0, 30);
+    if (result.links.length > 100) result.links = result.links.slice(0, 100);
+    if (result.tables.length > 30) result.tables = result.tables.slice(0, 30);
+    if (result.paragraphs.length > 300) result.paragraphs = result.paragraphs.slice(0, 300);
+    
+    // Update stats
+    result.stats.truncated = true;
+  }
+
+  return result;
 }
 
 // Function to highlight text on the page
@@ -214,6 +478,8 @@ async function createFloatingIcon() {
   img.src = chrome.runtime.getURL('images/icon48.png');
   img.alt = 'VU Education Lab AI Assistant';
   img.style.transition = 'opacity 0.2s, width 0.2s, height 0.2s';
+  img.draggable = false; // Prevent native image drag behavior
+  img.style.pointerEvents = 'none'; // Let clicks/drags pass through to the button
   icon.appendChild(img);
 
   // Add click event to show draggable window
@@ -290,16 +556,15 @@ function makeFloatingIconDraggable(icon) {
 
   icon.onmousedown = function (e) {
     if (icon.classList.contains('minimized')) return;
-    if (e.target.tagName === 'IMG' || e.target === icon) {
-      isDragging = true;
-      startX = e.clientX;
-      startY = e.clientY;
-      startLeft = icon.offsetLeft;
-      startTop = icon.offsetTop;
-      document.body.style.userSelect = 'none';
-      document.onmousemove = drag;
-      document.onmouseup = stopDrag;
-    }
+    e.preventDefault(); // Prevent native image drag behavior
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = icon.offsetLeft;
+    startTop = icon.offsetTop;
+    document.body.style.userSelect = 'none';
+    document.onmousemove = drag;
+    document.onmouseup = stopDrag;
   };
 
   function drag(e) {
@@ -544,6 +809,11 @@ function hideDraggableWindow() {
 
 // Check if the current page is likely educational or informational
 function isEducationalPage() {
+  // PDFs are often educational/informational content
+  if (isPDFPage()) {
+    return true;
+  }
+  
   // Domains commonly used for educational or informational purposes
   const educationalDomains = [
     '.edu', '.ac.', 'scholar.', 'academic.', 'research.', 'science.',

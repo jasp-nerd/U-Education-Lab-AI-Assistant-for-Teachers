@@ -181,6 +181,90 @@
       vertical-align: middle; 
     }
     
+    /* Account Section Styling */
+    .account-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 15px;
+    }
+    
+    .account-profile {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+    }
+    
+    .settings-user-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      border: 2px solid var(--vu-blue);
+      object-fit: cover;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    }
+    
+    .account-details {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .settings-user-name {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--vu-dark-blue);
+      margin-bottom: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    .settings-user-email {
+      font-size: 13px;
+      color: var(--vu-dark-gray);
+      opacity: 0.85;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    .sign-out-btn-settings {
+      background-color: transparent;
+      color: var(--vu-dark-gray);
+      border: 1px solid rgba(0, 0, 0, 0.2);
+      padding: 10px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      min-width: 120px;
+      justify-content: center;
+    }
+    
+    .sign-out-btn-settings:hover {
+      background-color: rgba(220, 53, 69, 0.1);
+      color: #dc3545;
+      border-color: #dc3545;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(220, 53, 69, 0.2);
+    }
+    
+    .sign-out-btn-settings:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 2px rgba(220, 53, 69, 0.1);
+    }
+    
+    .sign-out-btn-settings .btn-icon {
+      font-size: 16px;
+    }
+    
     /* Footer styling */
     footer {
       margin-top: 30px;
@@ -203,15 +287,25 @@
       <h2 id="settings-title" data-i18n="settingsTitle">Settings</h2>
       <span style="font-size:22px;margin-left:auto;color:var(--vu-blue);">⚙️</span>
     </div>
-    <div class="settings-section" id="settings-backend-section">
-      <h3 id="settings-backend-section-title" data-i18n="settingsBackendSection">Backend Configuration</h3>
-      <p id="settings-backend-desc" data-i18n="settingsBackendDesc">The extension now uses a secure backend server. No API key setup required!</p>
-      <p id="settings-backend-info" data-i18n="settingsBackendInfo">API keys are managed securely on the server side.</p>
-      <div class="input-group">
-        <button id="settings-check-backend" data-tooltip="Check backend server connection">Check Connection</button>
+    
+    <!-- User Account Section -->
+    <div class="settings-section" id="settings-account-section">
+      <h3>Account</h3>
+      <div class="account-info">
+        <div class="account-profile">
+          <img id="settings-user-avatar" src="" alt="User Avatar" class="settings-user-avatar">
+          <div class="account-details">
+            <div id="settings-user-name" class="settings-user-name"></div>
+            <div id="settings-user-email" class="settings-user-email"></div>
+          </div>
+        </div>
+        <button id="settings-sign-out-btn" class="sign-out-btn-settings">
+          <span class="btn-icon">🚪</span>
+          <span>Sign Out</span>
+        </button>
       </div>
-      <div id="settings-backend-status" role="status"></div>
     </div>
+    
     <div class="settings-section" id="settings-language-section">
       <h3 id="settings-language-section-title" data-i18n="settingsLanguageSection">Language</h3>
       <div class="input-group">
@@ -235,6 +329,7 @@
       <p>Developed by Vrije Universiteit Amsterdam</p>
     </footer>
   </div>
+  <script src="auth.js"></script>
   <script src="api.js"></script>
   <script src="settings.js"></script>
 </body>

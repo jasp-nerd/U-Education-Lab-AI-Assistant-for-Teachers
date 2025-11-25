@@ -3,17 +3,11 @@
   "name": "VU Education Lab AI Assistant for Teachers",
   "version": "3.2.0",
   "description": "An AI assistant for VU teachers to analyze web page content using a secure backend server with Google Gemini API.",
+  "key": "YOUR_CHROME_EXTENSION_KEY_HERE",
   "permissions": ["activeTab", "storage", "scripting", "identity"],
   "host_permissions": [
-    "https://*.herokuapp.com/*"
+    "https://*.azurewebsites.net/*"
   ],
-  "oauth2": {
-    "client_id": "696134929035-kl0md54jeopf5s3i0vjupktgt5umnplr.apps.googleusercontent.com",
-    "scopes": [
-      "https://www.googleapis.com/auth/userinfo.email",
-      "https://www.googleapis.com/auth/userinfo.profile"
-    ]
-  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
@@ -31,7 +25,8 @@
     {
       "matches": ["https://*/*", "http://*/*"],
       "js": ["content.js"],
-      "css": ["content.css"]
+      "css": ["content.css"],
+      "all_frames": false
     }
   ],
   "background": {
@@ -51,3 +46,4 @@
     }
   ]
 }
+
